@@ -2,63 +2,68 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-class DQN(nn.Module):
-    def __init__(self, state_size, action_size):
-        super(DQN, self).__init__()
-        self.fc1 = nn.Linear(state_size, 24)
-        self.fc2 = nn.Linear(24, 24)
-        self.fc3 = nn.Linear(24, action_size)
-        
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+from tianshou.data import Collector, ReplayBuffer
+from tianshou.env import DummyVectorEnv
+from tianshou.policy import DQNPolicy
+from tianshou.trainer import offpolicy_trainer
 
 class MinesweeperAgent:
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, hidden_size=128, lr=1e-3, gamma=0.99, epsilon=0.1):
         self.state_size = state_size
         self.action_size = action_size
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        self.model = DQN(state_size, action_size).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
-        self.criterion = nn.MSELoss()
+        self.hidden_size = hidden_size
+        self.lr = lr
+        self.gamma = gamma
+        self.epsilon = epsilon
 
-    def train(self, state, action, reward, next_state, done):
-        state = torch.FloatTensor(state).to(self.device)
-        next_state = torch.FloatTensor(next_state).to(self.device)
-        reward = torch.FloatTensor([reward]).to(self.device)
+        self.model = self.build_model()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        self.policy = DQNPolicy(model=self.model, optim=self.optimizer, discount_factor=self.gamma, estimation_step=3, target_update_freq=320)
 
-        # 计算目标Q值
-        with torch.no_grad():
-            target = reward
-            if not done:
-                target = reward + 0.95 * torch.max(self.model(next_state))
-
-        # 计算当前Q值
-        current = self.model(state)[0][action]
-
-        # 计算损失并更新
-        loss = self.criterion(current, target)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+    def build_model(self):
+        return nn.Sequential(
+            nn.Linear(self.state_size, self.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size, self.action_size)
+        )
 
     def act(self, state):
-        state = torch.FloatTensor(state).to(self.device)
-        with torch.no_grad():
-            action_values = self.model(state)
-        return torch.argmax(action_values[0]).item()
+        if np.random.rand() < self.epsilon:
+            return np.random.randint(self.action_size)
+        else:
+            state = torch.FloatTensor(state)
+            q_values = self.model(state)
+            return q_values.argmax().item()
 
-    def save(self, path):
-        torch.save(self.model.state_dict(), path)
+def train_agent(agent, env, buffer_size=20000, batch_size=64, epoch=10, step_per_epoch=1000, step_per_collect=10, update_per_step=0.1):
+    train_envs = DummyVectorEnv([lambda: env for _ in range(8)])
+    test_envs = DummyVectorEnv([lambda: env for _ in range(8)])
+    buffer = ReplayBuffer(buffer_size)
+    collector = Collector(agent.policy, train_envs, buffer, exploration_noise=True)
+    test_collector = Collector(agent.policy, test_envs, exploration_noise=True)
 
-    def load(self, path):
-        self.model.load_state_dict(torch.load(path))
+    result = offpolicy_trainer(
+        policy=agent.policy,
+        train_collector=collector,
+        test_collector=test_collector,
+        max_epoch=epoch,
+        step_per_epoch=step_per_epoch,
+        step_per_collect=step_per_collect,
+        update_per_step=update_per_step,
+        batch_size=batch_size,
+        train_fn=None,
+        test_fn=None,
+        stop_fn=None,
+        save_fn=None,
+        logger=None
+    )
+    return result
+
 
 # Example usage:
+# env = YourMinesweeperEnv()
 # agent = MinesweeperAgent(state_size=64, action_size=64)
-# state = np.zeros((1, 64))
-# action = agent.act(state)
-# print(action)
+# result = train_agent(agent, env)
+# print(result)

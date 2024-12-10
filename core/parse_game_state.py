@@ -7,69 +7,116 @@ import pyautogui
 from mss import mss
 
 def capture_screen(region=None):
+    """
+    获取屏幕截图
+    """
     with mss() as sct:
         screenshot = sct.grab(region)
         img = np.array(screenshot)
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
     
-def parse_game_state(img):
+def parse_grid_structure(img, templates, grid_size=9):
+    """
+    解析网格结构
+    """
 
     # 以 9x9 的格子为例，每个格子是一个数字，或者一个雷，或者一个空白，或者一个旗子，或者一个问号，或者一个未知的状态
-    # 0: 未知的状态 1: 旗子 2: 问号 3: 空白 4: 数字 5: 雷 
+    # 0: 未知的状态 1: 旗子 2: 空白 3: 数字 4: 雷 
     # 0. Define the game state
-    game_state = []
+    grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
 
-    # 1. Convert the image to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    grid_template = templates['grid_template']
+    # 除grid_template外，其他的模板都是单个数字或者雷的模板 
+    grid_state_template = {k: v for k, v in templates.items() if k != 'grid_template'}
 
-    # 2. Apply Gaussian blur to the image
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 匹配格子grid_size x grid_size的区域
+    grid_top_left, grid_bottom_right, _grid_match_val = match_template(img, grid_template)
+    grid_width = grid_bottom_right[0] - grid_top_left[0]
+    grid_height = grid_bottom_right[1] - grid_top_left[1]
 
-    # 3. Apply adaptive thresholding to the image
-    thresholded = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    cell_width = grid_width // grid_size
+    cell_height = grid_height // grid_size
 
-    # 4. Find contours in the image
-    contours, _ = cv2.findContours(thresholded, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    return grid, grid_top_left, cell_width, cell_height, grid_state_template
+    
+def parse_grid_state(img, grid, grid_top_left, cell_width, cell_height, grid_state_template):
+    """
+    解析每个格子的状态
+    """
 
-    # 5. Loop over the contours
-    game_state = []
-    for contour in contours:
-        # 6. Get the bounding box of the contour
-        x, y, w, h = cv2.boundingRect(contour)
+    grid_size = len(grid)
 
-        # 7. Extract the region of interest (ROI) from the image
-        roi = thresholded[y:y+h, x:x+w]
+    for i in range(grid_size):
+        for j in range(grid_size):
+            # 计算每个格子的坐标
+            x = grid_top_left[0] + j * cell_width
+            y = grid_top_left[1] + i * cell_height
+            cell = img[y:y+cell_height, x:x+cell_width]
 
-        # 8. Resize the ROI to a fixed size (e.g., 28x28)
-        roi_resized = cv2.resize(roi, (28, 28))
+            grid[i][j] = recognize_cell(cell, grid_state_template)
 
-        # 9. Flatten the ROI and append it to the game state
-        game_state.append(roi_resized.flatten())
+            # 画出每个格子的边界
+            cv2.rectangle(img, (x, y), (x + cell_width, y + cell_height), (0, 255, 0), 1)
 
-    # 10. Return the game state
+    return grid
 
-    return game_state
+def parse_subgrid_pos(grid, grid_top_left, cell_width, cell_height):
+    """
+    解析每个格子的中心坐标，构建一个字典，key是格子的坐标，value是格子的中心坐标
+    """
+    grid_size = len(grid)
+
+    centers = {}
+
+    for i in range(grid_size):
+        for j in range(grid_size):
+            x = grid_top_left[0] + j * cell_width + cell_width // 2
+            y = grid_top_left[1] + i * cell_height + cell_height // 2
+            centers[(i,j)] = (x, y)
+
+    return centers
+
+def recognize_cell(cell, templates, threshold=0.8):
+    """
+    识别每个格子的状态
+    """
+
+    for value, template in templates.items():
+        top_left, bottom_right, match_val = match_template(cell, template)
+        
+        if match_val > threshold:
+            return value
+        
+    return 0 # Unknown
 
 def match_template(img, template):
-    # 1. Convert the image to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    """
+    模版匹配
+    """
+    
+    # 1. 将图像转换为灰度图像
+    if len(img.shape) == 2:
+        gray = img
+    else:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 2. Apply template matching
+    # 2. 进行模版匹配
     res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
 
-    # 3. Get the location of the best match
+    # 3. 获取最佳匹配的位置，以及最大值和最小值，最大值和最小值的位置
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
 
-    # 4. Get the top-left and bottom-right coordinates of the bounding box
+    # 4. 获取匹配的左上角和右下角的坐标，原点在左上角
     top_left = max_loc
     h, w = template.shape
     bottom_right = (top_left[0] + w, top_left[1] + h)
 
-    return top_left, bottom_right
+    return top_left, bottom_right, max_val
 
 def locate_game_elements(img, reset_button_template, game_area_template):
-    game_area_top_left, game_area_bottom_right = match_template(img, game_area_template)
-    reset_button_top_left, reset_button_bottom_right = match_template(img, reset_button_template)
+    
+    game_area_top_left, game_area_bottom_right, _game_area_val = match_template(img, game_area_template)
+    reset_button_top_left, reset_button_bottom_right, _reset_button_val = match_template(img, reset_button_template)
 
     print("game_area_top_left: ", game_area_top_left, "game_area_bottom_right: ", game_area_bottom_right)
     print("reset_button_top_left: ", reset_button_top_left, "reset_button_bottom_right: ", reset_button_bottom_right)
@@ -83,6 +130,10 @@ def locate_game_elements(img, reset_button_template, game_area_template):
     }
 
 def click_random_in_area(area, num_click=1):
+    """
+    在指定区域内随机点击
+    """
+
     top_left, bottom_right = area
     print("top_left: ", top_left, "bottom_right: ", bottom_right)
     x = random.randint(top_left[0]+10, bottom_right[0]-10) # Avoid clicking on the border
@@ -91,8 +142,14 @@ def click_random_in_area(area, num_click=1):
     pyautogui.moveTo(x//2, y//2)
     pyautogui.click(clicks=num_click, interval=0.5)
 
-# Example usage:
-if __name__ == "__main__":
+def click_position(x, y, num_click=1, interval=0.5, button='left'): 
+    """
+    点击指定位置
+    """
+    pyautogui.moveTo(x//2, y//2)
+    pyautogui.click(clicks=num_click, interval=interval, button=button)
+
+def test_click():
 
     reset_button_template_path = "/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/docs/screenshot/reset_button_template.png"
     game_area_template_path = "/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/docs/screenshot/game_area_template.png"
@@ -102,7 +159,6 @@ if __name__ == "__main__":
     img_game_area_template = cv2.imread(game_area_template_path, cv2.IMREAD_GRAYSCALE)
 
     screen_width, screen_height = pyautogui.size()
-    print("screen_width: ", screen_width, "screen_height: ", screen_height)
     # Define the region of the screen to capture, start from (left, top) and the width and height of the region
     region = {'left': 0, 'top': 0, 'width': screen_width, 'height': screen_height}
     img = capture_screen(region)
@@ -118,9 +174,53 @@ if __name__ == "__main__":
     time.sleep(1)
     print("click_reset_button ... ")
     click_random_in_area(reset_button)
-    
-    # cv2.imshow('Matched img', img)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+
+def test_parser():
+
+    templates = {
+        # empty
+        0: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/empty_template.png', cv2.IMREAD_GRAYSCALE),
+
+        # numbers of mines
+        1: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/1_template.png', cv2.IMREAD_GRAYSCALE),
+        2: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/2_template.png', cv2.IMREAD_GRAYSCALE),
+        3: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/3_template.png', cv2.IMREAD_GRAYSCALE),
+        4: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/4_template.png', cv2.IMREAD_GRAYSCALE),
+        5: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/5_template.png', cv2.IMREAD_GRAYSCALE),
+
+        # failed
+        99: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/failed_button_template.png', cv2.IMREAD_GRAYSCALE),
+        # exploded
+        88: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/flag_template.png', cv2.IMREAD_GRAYSCALE),
+        # empty (duplicated with 0)
+        # 77: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/empty_template.png', cv2.IMREAD_GRAYSCALE),
+
+        # grid
+        'grid_template': cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/grid_template.png', cv2.IMREAD_GRAYSCALE),
+    }
+
+    screen_width, screen_height = pyautogui.size()
+    region = {'left': 0, 'top': 0, 'width': screen_width, 'height': screen_height}
+    img = capture_screen(region)
+
+    grid_structure = parse_grid_structure(img, templates)
+    grid_state = parse_grid_state(img, *grid_structure)
+    grid_pos = parse_subgrid_pos(grid_structure[0], grid_structure[1], grid_structure[2], grid_structure[3])
+
+    for row in grid_state:
+        print(row) 
+
+    click_position(*grid_pos[(8,1)], num_click=2)
+
+    new_img = capture_screen(region)
+    new_grid_state = parse_grid_state(new_img, *grid_structure)
+
+    for row in new_grid_state:
+        print(row)
+
+# Example usage:
+if __name__ == "__main__":
+
+    test_parser()
 
 
