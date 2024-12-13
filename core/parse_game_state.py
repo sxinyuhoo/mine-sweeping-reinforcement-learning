@@ -1,4 +1,4 @@
-
+import os
 import cv2
 import numpy as np
 import random
@@ -27,7 +27,7 @@ def parse_grid_structure(img, templates, grid_size=9):
 
     grid_template = templates['grid_template']
     # 除grid_template外，其他的模板都是单个数字或者雷的模板 
-    grid_state_template = {k: v for k, v in templates.items() if k != 'grid_template'}
+    grid_state_template = {k: v for k, v in templates.items() if k != 'grid_template' and k != 'reset_button_template'}
 
     # 匹配格子grid_size x grid_size的区域
     grid_top_left, grid_bottom_right, _grid_match_val = match_template(img, grid_template)
@@ -56,7 +56,7 @@ def parse_grid_state(img, grid, grid_top_left, cell_width, cell_height, grid_sta
             grid[i][j] = recognize_cell(cell, grid_state_template)
 
             # 画出每个格子的边界
-            cv2.rectangle(img, (x, y), (x + cell_width, y + cell_height), (0, 255, 0), 1)
+            # cv2.rectangle(img, (x, y), (x + cell_width, y + cell_height), (0, 255, 0), 1)
 
     return grid
 
@@ -76,18 +76,45 @@ def parse_subgrid_pos(grid, grid_top_left, cell_width, cell_height):
 
     return centers
 
+def parse_reset_pos(img, reset_button_template):
+    """
+    解析重置按钮的中心位置
+    """
+
+    top_left, bottom_right, _ = match_template(img, reset_button_template)
+
+    center_pos_x = bottom_right[0] - (bottom_right[0] - top_left[0]) // 2
+    center_pos_y = bottom_right[1] - (bottom_right[1] - top_left[1]) // 2
+    return (center_pos_x, center_pos_y)
+
 def recognize_cell(cell, templates, threshold=0.8):
     """
     识别每个格子的状态
     """
 
+    max_match_val = 0
+    best_match_value = None
+
     for value, template in templates.items():
         top_left, bottom_right, match_val = match_template(cell, template)
         
+        # if match_val > max_match_val:
+        #     max_match_val = match_val
+        #     best_match_value = value
         if match_val > threshold:
-            return value
+            best_match_value = value
+            break
+    
+    # # 如果最佳匹配值是0或者77，那么需要进一步判断
+    if best_match_value in (0, 77):
         
-    return 0 # Unknown
+        # 取cell的左上角像素点的颜色，如果是白色，则为0，否则是77
+        if cell[5, 5][0] > 200 and cell[5, 5][1] > 200 and cell[5, 5][2] > 200:
+            best_match_value = 0
+        else:
+            best_match_value = 77
+
+    return best_match_value # 已探索过的空白区域
 
 def match_template(img, template):
     """
@@ -151,8 +178,8 @@ def click_position(x, y, num_click=1, interval=0.5, button='left'):
 
 def test_click():
 
-    reset_button_template_path = "/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/docs/screenshot/reset_button_template.png"
-    game_area_template_path = "/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/docs/screenshot/game_area_template.png"
+    reset_button_template_path = "../docs/screenshot/reset_button_template.png"
+    game_area_template_path = "../docs/screenshot/game_area_template.png"
 
     # img_ms_template = cv2.imread(ms_template_path, cv2.IMREAD_GRAYSCALE)
     img_reset_button_template = cv2.imread(reset_button_template_path, cv2.IMREAD_GRAYSCALE)
@@ -177,46 +204,54 @@ def test_click():
 
 def test_parser():
 
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
     templates = {
-        # empty
-        0: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/empty_template.png', cv2.IMREAD_GRAYSCALE),
+        # unexploded cell
+        0: cv2.imread(os.path.join(base_path,'../config/screenshot_template/0_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # numbers of mines
-        1: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/1_template.png', cv2.IMREAD_GRAYSCALE),
-        2: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/2_template.png', cv2.IMREAD_GRAYSCALE),
-        3: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/3_template.png', cv2.IMREAD_GRAYSCALE),
-        4: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/4_template.png', cv2.IMREAD_GRAYSCALE),
-        5: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/5_template.png', cv2.IMREAD_GRAYSCALE),
+        1: cv2.imread(os.path.join(base_path,'../config/screenshot_template/1_template.png'), cv2.IMREAD_GRAYSCALE),
+        2: cv2.imread(os.path.join(base_path,'../config/screenshot_template/2_template.png'), cv2.IMREAD_GRAYSCALE),
+        3: cv2.imread(os.path.join(base_path,'../config/screenshot_template/3_template.png'), cv2.IMREAD_GRAYSCALE),
+        4: cv2.imread(os.path.join(base_path,'../config/screenshot_template/4_template.png'), cv2.IMREAD_GRAYSCALE),
+        5: cv2.imread(os.path.join(base_path,'../config/screenshot_template/5_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # failed
-        99: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/failed_button_template.png', cv2.IMREAD_GRAYSCALE),
-        # exploded
-        88: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/flag_template.png', cv2.IMREAD_GRAYSCALE),
-        # empty (duplicated with 0)
-        # 77: cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/empty_template.png', cv2.IMREAD_GRAYSCALE),
+        99: cv2.imread(os.path.join(base_path,'../config/screenshot_template/failed_button_template.png'), cv2.IMREAD_GRAYSCALE),
+        # flagged mine
+        88: cv2.imread(os.path.join(base_path,'../config/screenshot_template/flag_template.png'), cv2.IMREAD_GRAYSCALE),
+        # exploded but empty cell
+        77: cv2.imread(os.path.join(base_path,'../config/screenshot_template/empty_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # grid
-        'grid_template': cv2.imread('/Users/sean/Documents/study/project/RL/mine-sweeping-reinforcement-learning/config/screenshot_template/grid_template.png', cv2.IMREAD_GRAYSCALE),
+        'grid_template': cv2.imread(os.path.join(base_path,'../config/screenshot_template/grid_template.png'), cv2.IMREAD_GRAYSCALE),
+        # reset button
+        'reset_button_template': cv2.imread(os.path.join(base_path,'../config/screenshot_template/reset_button_template.png'), cv2.IMREAD_GRAYSCALE)
     }
 
     screen_width, screen_height = pyautogui.size()
     region = {'left': 0, 'top': 0, 'width': screen_width, 'height': screen_height}
     img = capture_screen(region)
 
+    time.sleep(3)
     grid_structure = parse_grid_structure(img, templates)
     grid_state = parse_grid_state(img, *grid_structure)
     grid_pos = parse_subgrid_pos(grid_structure[0], grid_structure[1], grid_structure[2], grid_structure[3])
+    reset_pos = parse_reset_pos(img, templates['reset_button_template'])
 
     for row in grid_state:
         print(row) 
+    print("\n === \n")
 
-    click_position(*grid_pos[(8,1)], num_click=2)
+    # click_position(*grid_pos[(8,1)], num_click=2)
+    # click_position(*reset_pos, num_click=2)
 
-    new_img = capture_screen(region)
-    new_grid_state = parse_grid_state(new_img, *grid_structure)
+    # new_img = capture_screen(region)
+    # new_grid_state = parse_grid_state(new_img, *grid_structure)
 
-    for row in new_grid_state:
-        print(row)
+    # for row in new_grid_state:
+    #     print(row)
 
 # Example usage:
 if __name__ == "__main__":
