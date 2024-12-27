@@ -92,27 +92,26 @@ def recognize_cell(cell, templates, threshold=0.8):
     识别每个格子的状态
     """
 
-    max_match_val = 0
     best_match_value = None
 
     for value, template in templates.items():
         top_left, bottom_right, match_val = match_template(cell, template)
         
-        # if match_val > max_match_val:
-        #     max_match_val = match_val
-        #     best_match_value = value
         if match_val > threshold:
             best_match_value = value
             break
+
+    if best_match_value is None:
+        best_match_value = 77
     
-    # # 如果最佳匹配值是0或者77，那么需要进一步判断
-    if best_match_value in (0, 77):
+    # 如果最佳匹配值是0或者77，那么需要进一步判断
+    # if best_match_value in (0, 77):
         
-        # 取cell的左上角像素点的颜色，如果是白色，则为0，否则是77
-        if cell[5, 5][0] > 200 and cell[5, 5][1] > 200 and cell[5, 5][2] > 200:
-            best_match_value = 0
-        else:
-            best_match_value = 77
+    #     # 取cell的左上角像素点的颜色，如果是白色，则为0，否则是77
+    #     if cell[5, 5][0] > 200 and cell[5, 5][1] > 200 and cell[5, 5][2] > 200:
+    #         best_match_value = 0
+    #     else:
+    #         best_match_value = 77
 
     return best_match_value # 已探索过的空白区域
 
@@ -217,8 +216,8 @@ def test_parser():
         4: cv2.imread(os.path.join(base_path,'../config/screenshot_template/4_template.png'), cv2.IMREAD_GRAYSCALE),
         5: cv2.imread(os.path.join(base_path,'../config/screenshot_template/5_template.png'), cv2.IMREAD_GRAYSCALE),
 
-        # failed
-        99: cv2.imread(os.path.join(base_path,'../config/screenshot_template/failed_button_template.png'), cv2.IMREAD_GRAYSCALE),
+        # mine 
+        99: cv2.imread(os.path.join(base_path,'../config/screenshot_template/mine_template.png'), cv2.IMREAD_GRAYSCALE),
         # flagged mine
         88: cv2.imread(os.path.join(base_path,'../config/screenshot_template/flag_template.png'), cv2.IMREAD_GRAYSCALE),
         # exploded but empty cell
@@ -243,6 +242,9 @@ def test_parser():
     for row in grid_state:
         print(row) 
     print("\n === \n")
+    # cv2.imshow("img", img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
     # click_position(*grid_pos[(8,1)], num_click=2)
     # click_position(*reset_pos, num_click=2)
