@@ -21,8 +21,6 @@ def parse_grid_structure(img, templates, grid_size=9):
     """
 
     # 以 9x9 的格子为例，每个格子是一个数字，或者一个雷，或者一个空白，或者一个旗子，或者一个问号，或者一个未知的状态
-    # 0: 未知的状态 1: 旗子 2: 空白 3: 数字 4: 雷 
-    # 0. Define the game state
     grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
 
     grid_template = templates['grid_template']
@@ -102,16 +100,7 @@ def recognize_cell(cell, templates, threshold=0.8):
             break
 
     if best_match_value is None:
-        best_match_value = 77
-    
-    # 如果最佳匹配值是0或者77，那么需要进一步判断
-    # if best_match_value in (0, 77):
-        
-    #     # 取cell的左上角像素点的颜色，如果是白色，则为0，否则是77
-    #     if cell[5, 5][0] > 200 and cell[5, 5][1] > 200 and cell[5, 5][2] > 200:
-    #         best_match_value = 0
-    #     else:
-    #         best_match_value = 77
+        best_match_value = 0
 
     return best_match_value # 已探索过的空白区域
 
@@ -206,10 +195,9 @@ def test_parser():
     base_path = os.path.dirname(os.path.abspath(__file__))
 
     templates = {
-        # unexploded cell
-        0: cv2.imread(os.path.join(base_path,'../config/screenshot_template/0_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # numbers of mines
+        0: cv2.imread(os.path.join(base_path,'../config/screenshot_template/0_template.png'), cv2.IMREAD_GRAYSCALE),
         1: cv2.imread(os.path.join(base_path,'../config/screenshot_template/1_template.png'), cv2.IMREAD_GRAYSCALE),
         2: cv2.imread(os.path.join(base_path,'../config/screenshot_template/2_template.png'), cv2.IMREAD_GRAYSCALE),
         3: cv2.imread(os.path.join(base_path,'../config/screenshot_template/3_template.png'), cv2.IMREAD_GRAYSCALE),
@@ -217,11 +205,11 @@ def test_parser():
         5: cv2.imread(os.path.join(base_path,'../config/screenshot_template/5_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # mine 
-        99: cv2.imread(os.path.join(base_path,'../config/screenshot_template/mine_template.png'), cv2.IMREAD_GRAYSCALE),
+        9: cv2.imread(os.path.join(base_path,'../config/screenshot_template/mine_template.png'), cv2.IMREAD_GRAYSCALE),
         # flagged mine
-        88: cv2.imread(os.path.join(base_path,'../config/screenshot_template/flag_template.png'), cv2.IMREAD_GRAYSCALE),
-        # exploded but empty cell
-        77: cv2.imread(os.path.join(base_path,'../config/screenshot_template/empty_template.png'), cv2.IMREAD_GRAYSCALE),
+        8: cv2.imread(os.path.join(base_path,'../config/screenshot_template/flag_template.png'), cv2.IMREAD_GRAYSCALE),
+        # unexploded cell
+        7: cv2.imread(os.path.join(base_path,'../config/screenshot_template/empty_template.png'), cv2.IMREAD_GRAYSCALE),
 
         # grid
         'grid_template': cv2.imread(os.path.join(base_path,'../config/screenshot_template/grid_template.png'), cv2.IMREAD_GRAYSCALE),
