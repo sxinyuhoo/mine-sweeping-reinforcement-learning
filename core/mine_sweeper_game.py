@@ -132,17 +132,17 @@ class MineSweeper:
 
             # if game over, return 0
             if self.grid[row_indx][col_indx] == 9:
-                print('Game Over\n')
+                # print('Game Over')
                 # self.show_grid(self.grid)
                 return -1
 
             elif cur_cell == 7:
-                print("Cell is empty")
+                # print("Cell is empty")
                 self.show_cells(self.grid, self.cur_grid, row_indx, col_indx)
                 # self.show_grid(self.cur_grid)
             else:
                 # print(pos)
-                print("That cell is already shown")
+                # print("That cell is already shown")
                 return -2
 
             cur_grid_array = np.array(self.cur_grid)
@@ -151,8 +151,7 @@ class MineSweeper:
             if mines_left == 0:
                 minutes, seconds = divmod(int(time.time() - self.starttime), 60)
                 print(
-                    'You Win. '
-                    'It took you {} minutes and {} seconds.\n'.format(minutes, seconds))
+                    "You Win. It took you {} minutes and {} seconds.\n".format(minutes, seconds))
                 # self.show_grid(self.grid)
                 return 1
             

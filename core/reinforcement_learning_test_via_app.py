@@ -9,7 +9,7 @@ import time
 from gymnasium import spaces
 from tianshou.data import Batch
 from tianshou.policy import DQNPolicy
-from reinforcement_learning_train import MinesweeperAgent
+from core.reinforcement_learning_train_9x9 import MinesweeperAgent
 
 
 class MinesweeperTestEnv():

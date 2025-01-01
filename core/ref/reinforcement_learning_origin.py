@@ -1,17 +1,21 @@
 import os
+import cv2
+import signal
+import sys
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import gymnasium as gym
-import numpy as np
+import parse_game_state as pgs
+import pyautogui
 from gymnasium import spaces
-from tianshou.data import Collector, VectorReplayBuffer, ReplayBuffer, Batch
+from tianshou.data import Collector, ReplayBuffer, Batch
 from tianshou.env import DummyVectorEnv
 from tianshou.policy import DQNPolicy
 from tianshou.trainer import OffpolicyTrainer
 from torch.utils.tensorboard import SummaryWriter
 from tianshou.utils import TensorboardLogger
-from mine_sweeper_game import MineSweeper
 
 class Net(nn.Module):
     def __init__(self, state_size, action_size, hidden_size):
@@ -47,7 +51,7 @@ class MinesweeperPolicy(DQNPolicy):
         """
         重写 forward 方法来实现自定义的动作选择逻辑
         Args:
-            batch: Batch 对象，包含观察值等信息
+            batch: Batch 对象，包含��察值等信息
             state: 环境状态
             **kwargs: 其他参数
         """
@@ -60,7 +64,11 @@ class MinesweeperPolicy(DQNPolicy):
         # 获取有效动作
         valid_actions = []
         for state in obs:
-            valid = [i for i in range(len(state)) if state[i] == 7]
+            valid = [i for i in range(len(state)) if state[i] == 0]
+            if not valid:
+                valid = [i for i in range(len(state)) if state[i] == 88]
+            if not valid:
+                valid = [i for i in range(len(state)) if state[i] != 99]
             valid_actions.append(valid)
             
         # 修改 Q 值，使无效动作的 Q 值为负无穷
@@ -79,69 +87,97 @@ class MinesweeperPolicy(DQNPolicy):
         )
 
 class MinesweeperEnv(gym.Env):
-    def __init__(self, grid_size=9, num_mines=10):
+
+    def __init__(self, templates, grid_size=9):
         super(MinesweeperEnv, self).__init__()
         self.grid_size = grid_size
         self.state_size = grid_size * grid_size
         self.action_space = spaces.Discrete(self.state_size)
-        self.observation_space = spaces.Box(low=0, high=9, shape=(self.state_size,), dtype=np.float32)
-        
-        # 创建扫雷游戏实例
-        self.game = MineSweeper(grid_size=grid_size, num_mines=num_mines)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.state_size,), dtype=np.float32)
 
-    def reset(self, seed=None):
+        _screen_width, _screen_height = pyautogui.size()
+        self.region = {'left': 0, 'top': 0, 'width': _screen_width, 'height': _screen_height}
+        self.templates = templates
+        _init_img = pgs.capture_screen(self.region)
+        self.grid_structure = pgs.parse_grid_structure(_init_img, self.templates, grid_size=self.grid_size)
+        self.grid_pos = pgs.parse_subgrid_pos(self.grid_structure[0], self.grid_structure[1], self.grid_structure[2], self.grid_structure[3])
+        self.reset_pos = pgs.parse_reset_pos(_init_img, self.templates['reset_button_template'])
+        
+        self.reset()
+
+    def reset(self):
+
         # 重置游戏状态
-        self.game = MineSweeper(grid_size=self.grid_size, num_mines=self.game.num_mines)
-        state = np.array(self.game.cur_grid).flatten()
-        return state, {}
+        self.state = np.zeros(self.state_size, dtype=np.int32)
+        
+        # 点击重置按钮
+        pgs.click_position(*self.reset_pos, num_click=2)
+
+        return self.state, {}  # 返回状态和字典
 
     def step(self, action):
-        # 将动作转换为网格坐标
+
+        # 动作转换为网格坐标
         row = action // self.grid_size
         col = action % self.grid_size
-        
-        # 记录之前的状态用于计算奖励
-        prev_state = np.array(self.game.cur_grid).flatten()
-        
-        # 执行动作
-        result = self.game.play_game((row, col))
-        
-        # 获取新状态
-        new_state = np.array(self.game.cur_grid).flatten()
-        
-        # 根据游戏返回值判断游戏状态和奖励
-        if result == 1:  # 胜利
-            reward = 100
-            done = True
-        elif result == -1:  # 踩雷
-            reward = -50
-            done = True
-        elif result == -2:  # 重复点击
-            reward = -1
-            done = False
-        else:  # 正常揭开格子
-            # 计算新揭开的格子数量
-            new_revealed = sum([1 for i, j in zip(prev_state, new_state) if i == 7 and j != 7])
-            reward = new_revealed if new_revealed > 0 else -0.1
-            done = False
-        
-        return new_state, reward, done, False, {}
-    
+
+        click_type = 'left' if self.state[action] == 0 else 'right'
+
+        # 点击指定位置
+        pgs.click_position(*self.grid_pos[(row, col)], num_click=2, button=click_type)
+
+        # 获取新的屏幕截图并解析网格状态
+        img = pgs.capture_screen(self.region)
+        prev_state = self.state
+        new_grid_state = pgs.parse_grid_state(img, *self.grid_structure)
+        # print(new_grid_state, "\n == \n")
+
+        # 更新状态
+        self.state = np.array(new_grid_state).reshape(-1)
+
+        # 检查游戏是否结束
+        done = self.check_done(self.state)
+
+        # 计算即时奖励
+        reward = self.calculate_reward(prev_state=prev_state, cur_state=self.state, done=done) 
+
+        return self.state, reward, done, False, {} # 返回 (observation, reward, terminated, truncated, info)
+
     def check_done(self, grid_state):
-        """
-        检查游戏是否结束
-        """
-        return any([cell == 9 for row in grid_state for cell in row])
+        # 检查是否有雷被点击
+        if 99 in grid_state:  # 99表示失败
+            return True
+        return False
     
-    def check_win(self, grid_state):
-        """
-        检查游戏是否胜利
-        """
-        return all([cell != 9 or cell != 7 for row in grid_state for cell in row])
+    def check_victory(self, state):
+        # 检查是否胜利，如果没有点到雷且所有格子都被点击，则胜利
+        if 0 not in state and 99 not in state:
+            return True
+        return False
+
+    def calculate_reward(self, prev_state, cur_state, done):
+        if done:
+            if self.check_victory(cur_state):
+                return 100  # 胜利奖励可以设置更高
+            else:
+                return -50  # 失败惩罚
+        else:
+            reward = 0
+            # 判断是否有新的格子被揭开
+            new_opened = sum([1 for i,j in zip(prev_state, cur_state) if i == 0 and j > 0])
+            if new_opened > 0:
+                reward += 1.0 * new_opened  # 增加揭开新格子的奖励
+            else:
+                reward -= 0.5  # 减小重复点击的惩罚
+
+            # 对点击已揭开的格子进行惩罚
+            already_opened = sum([1 for i,j in zip(prev_state, cur_state) if i==j and i > 0])
+            if already_opened > 0:
+                reward -= 0.5
+
+            return reward
 
 
-    def render(self):
-        self.game.show_grid(self.game.cur_grid)
 
 class MinesweeperAgent:
     def __init__(self, state_size, action_size, hidden_size=128, lr=1e-3, gamma=0.99, epsilon=0.1):
@@ -165,15 +201,12 @@ class MinesweeperAgent:
             action_space=spaces.Discrete(action_size)
         )
 
-def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=128, epoch=100, step_per_epoch=2000, step_per_collect=20, update_per_step=0.2):
+def train_agent(agent, env, buffer_size=50000, batch_size=128, epoch=100, step_per_epoch=2000, step_per_collect=20, update_per_step=0.2):
     # 设置环境
-    # train_env = DummyVectorEnv([lambda: env for _ in range(num_envs)])
-    # test_env = DummyVectorEnv([lambda: env for _ in range(num_envs)])
-    # buffer = VectorReplayBuffer(buffer_size, buffer_num=num_envs)
     train_env = DummyVectorEnv([lambda: env])
     test_env = DummyVectorEnv([lambda: env])
     buffer = ReplayBuffer(buffer_size)
-
+    
     # 设置收集器
     collector = Collector(
         policy=agent.policy,
@@ -189,7 +222,7 @@ def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=128, epoch
     )
 
     # 创建日志目录和writer
-    log_path = os.path.join('log', 'minesweeper_9x9')
+    log_path = os.path.join('log', 'minesweeper')
     os.makedirs(log_path, exist_ok=True)
     writer = SummaryWriter(log_path)
 
@@ -246,6 +279,10 @@ def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=128, epoch
     writer.close()
     return result
 
+def signal_handler(sig, frame):
+    print('You pressed Ctrl+C!')
+    sys.exit(0)
+
 def load_model(agent, model_path):
     if os.path.exists(model_path):
         agent.policy.load_state_dict(torch.load(model_path))
@@ -255,19 +292,48 @@ def load_model(agent, model_path):
         print("Model not found in ", model_path)
 
 def main():
+    # signal.signal(signal.SIGINT, signal_handler)
+
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
+    templates = {
+        # unexploded cell
+        0: cv2.imread(os.path.join(base_path,'../config/screenshot_template/0_template.png'), cv2.IMREAD_GRAYSCALE),
+
+        # numbers of mines
+        1: cv2.imread(os.path.join(base_path,'../config/screenshot_template/1_template.png'), cv2.IMREAD_GRAYSCALE),
+        2: cv2.imread(os.path.join(base_path,'../config/screenshot_template/2_template.png'), cv2.IMREAD_GRAYSCALE),
+        3: cv2.imread(os.path.join(base_path,'../config/screenshot_template/3_template.png'), cv2.IMREAD_GRAYSCALE),
+        4: cv2.imread(os.path.join(base_path,'../config/screenshot_template/4_template.png'), cv2.IMREAD_GRAYSCALE),
+        5: cv2.imread(os.path.join(base_path,'../config/screenshot_template/5_template.png'), cv2.IMREAD_GRAYSCALE),
+
+        # mine
+        99: cv2.imread(os.path.join(base_path,'../config/screenshot_template/mine_template.png'), cv2.IMREAD_GRAYSCALE),
+        # flagged mine
+        88: cv2.imread(os.path.join(base_path,'../config/screenshot_template/flag_template.png'), cv2.IMREAD_GRAYSCALE),
+        # exploded but empty cell
+        77: cv2.imread(os.path.join(base_path,'../config/screenshot_template/empty_template.png'), cv2.IMREAD_GRAYSCALE),
+
+        # grid
+        'grid_template': cv2.imread(os.path.join(base_path,'../config/screenshot_template/grid_template.png'), cv2.IMREAD_GRAYSCALE),
+        # reset button
+        'reset_button_template': cv2.imread(os.path.join(base_path,'../config/screenshot_template/reset_button_template.png'), cv2.IMREAD_GRAYSCALE)
+    }
+
     # 初始化环境和智能体
     grid_size = 9
-    num_mines = 10
-    env = MinesweeperEnv(grid_size=grid_size, num_mines=num_mines)
+    env = MinesweeperEnv(templates=templates, grid_size=grid_size)
     agent = MinesweeperAgent(state_size=grid_size*grid_size, action_size=grid_size*grid_size)
 
+    # 将 agent 传递给环境
+    env.agent = agent
+
     # 加载模型
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, '../log/minesweeper_9x9/policy.pth')
+    model_path = os.path.join(base_path, '../log/minesweeper/policy.pth')
     load_model(agent, model_path)
 
-    # 训练智能体
-    result = train_agent(agent, env, epoch=1000)
+    result = train_agent(agent, env, epoch=100)
+
 
 if __name__ == '__main__':
     main()
