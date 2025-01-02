@@ -13,6 +13,10 @@ from torch.utils.tensorboard import SummaryWriter
 from tianshou.utils import TensorboardLogger
 from mine_sweeper_game import MineSweeper
 
+# 在文件开头添加设备检测
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 class Net(nn.Module):
     def __init__(self, state_size, action_size, hidden_size=256):
         super().__init__()
@@ -59,7 +63,7 @@ class Net(nn.Module):
 
     def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
-            obs = torch.tensor(obs, dtype=torch.float)
+            obs = torch.tensor(obs, dtype=torch.float).to(device)
         batch = obs.shape[0] if len(obs.shape) > 1 else 1
         x = obs.view(batch, -1)
         
@@ -84,7 +88,7 @@ class Net(nn.Module):
 class MinesweeperPolicy(DQNPolicy):
     def __init__(self, model, optim, discount_factor, estimation_step, target_update_freq, action_space):
         super().__init__(
-            model=model,
+            model=model.to(device),  # 将模型移动到指定设备
             optim=optim,
             discount_factor=discount_factor,
             estimation_step=estimation_step,
@@ -105,7 +109,7 @@ class MinesweeperPolicy(DQNPolicy):
         q_values, hidden = self.model(obs, state=state)
         
         if isinstance(obs, np.ndarray):
-            obs = torch.from_numpy(obs).float()
+            obs = torch.from_numpy(obs).float().to(device)
             
         # 获取有效动作
         valid_actions = []
@@ -205,7 +209,7 @@ class MinesweeperAgent:
         self.gamma = gamma
         self.epsilon = epsilon
 
-        self.model = Net(state_size, action_size, hidden_size)
+        self.model = Net(state_size, action_size, hidden_size).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         
         # 使用自定义的 MinesweeperPolicy
@@ -301,9 +305,8 @@ def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=128, epoch
 
 def load_model(agent, model_path):
     if os.path.exists(model_path):
-        agent.policy.load_state_dict(torch.load(model_path))
-        print("Model loaded from ", model_path)
-
+        agent.policy.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Model loaded from {model_path} to {device}")
     else:
         print("Model not found in ", model_path)
 
